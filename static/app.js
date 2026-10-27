@@ -4,7 +4,6 @@ const state = {
   printing: false,
   previewToken: 0,
   settingsTimer: 0,
-  printerCache: new Map(),
   suggestIndex: -1,
   suggestItems: [],
 };
@@ -333,7 +332,7 @@ function printerIsVirtual(name) {
   return ["pdf", "xps", "onenote", "fax"].some((key) => text.includes(key));
 }
 
-async function refreshDriverHint() {
+function refreshDriverHint() {
   const hint = $("print-hint");
   const name = $("printer").value;
   const selected = $("printer").selectedOptions[0];
@@ -354,16 +353,8 @@ async function refreshDriverHint() {
     hint.className = "field-hint bad";
     return;
   }
-  try {
-    hint.textContent = `${host ? `IP ${host}. ` : ""}Số tem là đúng số tem in ra. Tem đôi, mỗi hàng 2 tem.`;
-    hint.className = "field-hint";
-    if (!state.printerCache.has(name)) {
-      state.printerCache.set(name, await api(`/api/printer-info?name=${encodeURIComponent(name)}`));
-    }
-  } catch (error) {
-    hint.textContent = error.message;
-    hint.className = "field-hint warn";
-  }
+  hint.textContent = `${host ? `IP ${host}. ` : ""}Số tem là đúng số tem in ra. Tem đôi, mỗi hàng 2 tem.`;
+  hint.className = "field-hint";
 }
 
 function fillPrinters(data) {
@@ -397,7 +388,6 @@ function fillPrinters(data) {
 
 async function reloadPrinters(quiet = false) {
   const data = await api(quiet ? "/api/printers" : "/api/printers?refresh=1");
-  state.printerCache.clear();
   fillPrinters(data);
   refreshDriverHint();
   updatePrintState();

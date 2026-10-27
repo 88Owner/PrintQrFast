@@ -598,8 +598,17 @@ def printer_metrics(name: str) -> dict:
             pass
 
 
+def shift_image_left(image: Image.Image, dots: int) -> Image.Image:
+    dots = max(0, int(dots))
+    if not dots:
+        return image
+    moved = Image.new(image.mode, image.size, "white")
+    moved.paste(image, (-dots, 0))
+    return moved
+
+
 def tspl_payload(image: Image.Image, copies: int, shift_left_dots: int = 0) -> bytes:
-    fitted = image.convert("L")
+    fitted = shift_image_left(image, shift_left_dots).convert("L")
     if fitted.width % 8:
         padded = Image.new("L", (fitted.width + (8 - fitted.width % 8), fitted.height), 255)
         padded.paste(fitted, (0, 0))
@@ -615,8 +624,8 @@ def tspl_payload(image: Image.Image, copies: int, shift_left_dots: int = 0) -> b
                 if fitted.getpixel((x, y)) < 128:
                     byte |= 0x80 >> bit
             data.append(byte)
-    # Do not send SIZE, GAP, DENSITY, or SET. HPRT saves those and then asks to restore settings.
-    header = f"CLS\r\nBITMAP {-max(0, int(shift_left_dots))},0,{width_bytes},{height_dots},0,".encode("ascii")
+    # BITMAP stays at 0,0. A negative X makes the HPRT D41 reject the job.
+    header = f"CLS\r\nBITMAP 0,0,{width_bytes},{height_dots},0,".encode("ascii")
     footer = f"\r\nPRINT {max(1, int(copies))},1\r\n".encode("ascii")
     return header + bytes(data) + footer
 
@@ -644,6 +653,59 @@ def print_raw_lan(item: dict, printer: str, copies: int) -> dict:
     return {"message": f"Đã in {stickers} tem tới {ip}", "warning": ""}
 
 
+def printer_driver_port(printer: str) -> tuple[str, str]:
+    import win32print
+
+    handle = win32print.OpenPrinter(printer)
+    try:
+        info = win32print.GetPrinter(handle, 2)
+    finally:
+        win32print.ClosePrinter(handle)
+    return info.get("pDriverName") or "", info.get("pPortName") or ""
+
+
+def is_hprt_d41(printer: str, driver: str = "") -> bool:
+    return "d41" in f"{printer} {driver}".casefold()
+
+
+def raw_port_ok(port: str) -> bool:
+    text = port.casefold()
+    if any(mark in text for mark in ("onenote", "nul", "portprompt", "pdf", "xps", "fax")):
+        return False
+    return text.startswith("usb") or "tcp" in text or text.startswith("ip_")
+
+
+def print_raw_spool(printer: str, item: dict, copies: int) -> dict:
+    import win32print
+
+    stickers = normalize_copies(copies)
+    image = shift_image_left(render_pair(item, 203, 203), px(LEFT_SHIFT_MM, 203))
+    payload = tspl_payload(image, stickers // 2)
+    handle = win32print.OpenPrinter(printer)
+    started = False
+    try:
+        win32print.StartDocPrinter(handle, 1, (f"Tem {item['sku']}", None, "RAW"))
+        started = True
+        win32print.StartPagePrinter(handle)
+        written = win32print.WritePrinter(handle, payload)
+        win32print.EndPagePrinter(handle)
+        win32print.EndDocPrinter(handle)
+        started = False
+    except Exception as exc:
+        if started:
+            try:
+                win32print.AbortPrinter(handle)
+            except Exception:
+                pass
+        raise RuntimeError(f"HPRT D41 không nhận lệnh in: {exc}") from exc
+    finally:
+        win32print.ClosePrinter(handle)
+    if written == 0:
+        raise RuntimeError("HPRT D41 không nhận lệnh in.")
+    log.info("printed %s stickers raw on %s", stickers, printer)
+    return {"message": f"Đã in {stickers} tem tới «{printer}»", "warning": ""}
+
+
 def print_label(item: dict, width_mm: float, height_mm: float, printer: str, copies: int) -> dict:
     if str(printer).startswith("lan:"):
         return print_raw_lan(item, printer, copies)
@@ -659,6 +721,14 @@ def print_label(item: dict, width_mm: float, height_mm: float, printer: str, cop
     names = [item_info.get("pPrinterName") for item_info in win32print.EnumPrinters(flags, None, 2)]
     if printer not in names:
         raise ValueError("Máy in không tồn tại")
+    driver, port = printer_driver_port(printer)
+    if is_hprt_d41(printer, driver):
+        if not raw_port_ok(port):
+            raise RuntimeError(
+                "HPRT D41 không in được vì cổng máy in không phải cổng USB. "
+                "Vào Windows → Máy in → Thuộc tính máy in HPRT D41 → Cổng, chọn cổng USB của máy in."
+            )
+        return print_raw_spool(printer, item, copies)
 
     hdc = win32ui.CreateDC()
     doc_started = False
