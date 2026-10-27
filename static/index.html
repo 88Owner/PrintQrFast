@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>In tem QR</title>
+  <link rel="icon" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="loading">
+  <header class="topbar">
+    <div class="brand">
+      <img src="/static/favicon.svg" width="32" height="32" alt="">
+      <div>
+        <strong>In tem QR</strong>
+        <span>Chọn hoặc quét, in ngay</span>
+      </div>
+    </div>
+    <div class="tabs" role="tablist">
+      <button type="button" class="tab" id="tab-print" role="tab" aria-selected="true">In tem</button>
+      <button type="button" class="tab" id="tab-master" role="tab" aria-selected="false">Master data</button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section id="view-print">
+      <div class="layout">
+        <section class="card">
+          <h2><span class="n">1</span> Chọn hoặc quét</h2>
+          <p class="lead">Gõ tên sản phẩm để lọc danh sách, hoặc quét QR/SKU có sẵn.</p>
+          <div class="scan-row">
+            <form id="scan-form">
+              <input id="scan" type="text" autocomplete="off" spellcheck="false" placeholder="Quét QR hoặc nhập SKU rồi Enter">
+              <button type="submit" class="btn">Nạp</button>
+            </form>
+          </div>
+          <label class="combo-label">Tên sản phẩm
+            <div class="combo">
+              <input id="product-search" type="text" autocomplete="off" spellcheck="false" autofocus placeholder="Gõ tên sản phẩm" role="combobox" aria-expanded="false" aria-controls="suggestions" aria-autocomplete="list">
+              <ul id="suggestions" class="suggestions" role="listbox" hidden></ul>
+            </div>
+          </label>
+          <p id="status" class="status">Gõ tên sản phẩm hoặc quét mã.</p>
+        </section>
+
+        <div class="stack">
+          <section class="card" hidden>
+            <h2><span class="n">2</span> Tạo tem tự động</h2>
+            <div class="label-stage" id="label-stage">
+              <p id="placeholder" class="placeholder">Chọn đủ thông tin hoặc quét mã để hiện tem</p>
+              <img id="label" alt="Xem trước tem" hidden>
+            </div>
+            <p id="preview-meta" class="field-hint"></p>
+            <label>Tên sản phẩm
+              <input id="name" type="text" maxlength="160" autocomplete="off">
+            </label>
+            <div class="grid-2">
+              <label>SKU
+                <input id="sku" type="text" maxlength="80" autocomplete="off" spellcheck="false">
+              </label>
+              <label>QR code
+                <input id="qr" type="text" maxlength="1000" autocomplete="off" spellcheck="false">
+              </label>
+            </div>
+            <button type="button" class="btn" id="save-btn" hidden>Lưu vào master</button>
+          </section>
+
+          <section class="card print-card">
+            <h2><span class="n">2</span> In ngay</h2>
+            <label>Máy in
+              <span class="inline">
+                <select id="printer"></select>
+                <button type="button" class="btn" id="reload-printers">Tải lại</button>
+              </span>
+            </label>
+            <label>Số tem
+              <span class="stepper">
+                <button type="button" id="copies-dec" aria-label="Giảm số tem">−</button>
+                <input id="copies" type="number" min="2" max="100" step="2" value="2">
+                <button type="button" id="copies-inc" aria-label="Tăng số tem">+</button>
+              </span>
+            </label>
+            <p id="print-hint" class="field-hint"></p>
+            <button type="button" class="btn primary" id="print-btn" disabled>In ngay</button>
+            <p class="shortcut">Ctrl+Enter để in. Lệnh đi thẳng tới máy in đã chọn.</p>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-master" hidden>
+      <div class="card">
+        <div class="row-head">
+          <h2>Nhập master data</h2>
+          <a class="linkish" href="/api/template">Tải file mẫu</a>
+        </div>
+        <p class="lead">File Excel (.xlsx) hoặc CSV. Dòng đầu là tiêu đề, gồm ba cột: SKU, Tên SP, QR code.</p>
+        <div class="add-row">
+          <input id="import-file" type="file" accept=".csv,.txt,.tsv,.xlsx">
+          <button type="button" class="btn primary" id="import-btn">Nhập file</button>
+        </div>
+        <p id="import-note" class="field-hint">Nhập file sẽ thay toàn bộ danh sách hiện tại.</p>
+      </div>
+
+      <div class="card">
+        <div class="row-head">
+          <h2>Sản phẩm</h2>
+          <span id="product-count" class="field-hint"></span>
+        </div>
+        <form id="master-form" class="master-form">
+          <label>SKU
+            <input id="m-sku" type="text" maxlength="80" autocomplete="off" spellcheck="false">
+          </label>
+          <label>Tên SP
+            <input id="m-name" type="text" maxlength="160" autocomplete="off">
+          </label>
+          <label>QR code
+            <input id="m-qr" type="text" maxlength="1000" autocomplete="off" spellcheck="false">
+          </label>
+          <div class="master-actions">
+            <button type="submit" class="btn primary" id="master-save">Lưu sản phẩm</button>
+            <button type="button" class="btn" id="master-clear">Làm mới</button>
+          </div>
+        </form>
+        <input id="search" type="search" placeholder="Tìm theo tên sản phẩm, SKU hoặc QR" autocomplete="off">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>SKU</th>
+                <th>Tên SP</th>
+                <th>QR code</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="product-rows"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" hidden role="status"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
