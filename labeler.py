@@ -29,6 +29,41 @@ from data_store import (
 log = logging.getLogger(__name__)
 BLACK = "#000000"
 LEFT_SHIFT_MM = 1.5
+_WIN32_READY = False
+
+
+def prepare_win32() -> None:
+    """Make pywin32 DLLs visible. A client install otherwise looks like a missing library."""
+    global _WIN32_READY
+    if _WIN32_READY:
+        return
+    import site
+    import sys
+    from pathlib import Path
+
+    folders: list[Path] = []
+    try:
+        folders.extend(Path(item) / "pywin32_system32" for item in site.getsitepackages())
+    except Exception:
+        pass
+    folders.append(Path(sys.prefix) / "Lib" / "site-packages" / "pywin32_system32")
+    try:
+        folders.append(Path(site.getusersitepackages()) / "pywin32_system32")
+    except Exception:
+        pass
+    seen: set[str] = set()
+    for folder in folders:
+        folder_text = str(folder)
+        if folder_text in seen or not folder.is_dir():
+            continue
+        seen.add(folder_text)
+        if hasattr(os, "add_dll_directory"):
+            try:
+                os.add_dll_directory(folder_text)
+            except OSError:
+                pass
+        os.environ["PATH"] = folder_text + os.pathsep + os.environ.get("PATH", "")
+    _WIN32_READY = True
 _LAN_LOCK = threading.Lock()
 _LAN_CACHE = {"at": 0.0, "ips": []}
 _IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
@@ -496,10 +531,11 @@ def list_printers(refresh: bool = False, remembered: str = "") -> dict:
     default_name = ""
     install_message = ""
     try:
+        prepare_win32()
         import win32print
-    except ImportError:
+    except ImportError as exc:
         win32print = None
-        install_message = "Chưa cài thư viện in. Đóng ứng dụng và chạy lại start.bat."
+        install_message = f"Không nạp được thư viện in: {exc}. Chạy lại start.bat."
     if win32print is not None:
         flags = win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
         port_hosts = tcp_port_hosts()
@@ -571,6 +607,7 @@ def list_printers(refresh: bool = False, remembered: str = "") -> dict:
 
 
 def printer_metrics(name: str) -> dict:
+    prepare_win32()
     import win32con
     import win32ui
 
@@ -654,6 +691,7 @@ def print_raw_lan(item: dict, printer: str, copies: int) -> dict:
 
 
 def printer_driver_port(printer: str) -> tuple[str, str]:
+    prepare_win32()
     import win32print
 
     handle = win32print.OpenPrinter(printer)
@@ -676,6 +714,7 @@ def raw_port_ok(port: str) -> bool:
 
 
 def print_raw_spool(printer: str, item: dict, copies: int) -> dict:
+    prepare_win32()
     import win32print
 
     stickers = normalize_copies(copies)
@@ -710,12 +749,13 @@ def print_label(item: dict, width_mm: float, height_mm: float, printer: str, cop
     if str(printer).startswith("lan:"):
         return print_raw_lan(item, printer, copies)
     try:
+        prepare_win32()
         import win32con
         import win32print
         import win32ui
         from PIL import ImageWin
     except ImportError as exc:
-        raise RuntimeError("Chưa cài thư viện in Windows. Chạy lại start.bat để cài đặt.") from exc
+        raise RuntimeError(f"Không nạp được thư viện in: {exc}. Chạy lại start.bat.") from exc
 
     flags = win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
     names = [item_info.get("pPrinterName") for item_info in win32print.EnumPrinters(flags, None, 2)]
