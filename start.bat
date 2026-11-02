@@ -36,13 +36,26 @@ if errorlevel 1 (
   exit /b 1
 )
 "%VPY%" -c "import fastapi,uvicorn,PIL,qrcode,win32print,openpyxl,multipart"
-if errorlevel 1 (
-  echo.
-  echo Thu vien van chua nap duoc. Chi tiet:
-  "%VPY%" -c "import fastapi,uvicorn,PIL,qrcode,win32print,openpyxl,multipart"
-  pause
-  exit /b 1
-)
+if not errorlevel 1 goto runapp
+if "%REBUILT%"=="1" goto importdetail
+echo Moi truong Python bi loi DLL. Dang tao lai...
+set "REBUILT=1"
+rmdir /s /q "%BASE%.venv"
+set "BOOT=python"
+python -c "import sys" >nul 2>&1
+if not errorlevel 1 goto makevenv
+set "BOOT=py -3"
+goto makevenv
 
+:importdetail
+echo.
+echo Thu vien van chua nap duoc. Chi tiet:
+"%VPY%" -c "import fastapi,uvicorn,PIL,qrcode,win32print,openpyxl,multipart"
+echo.
+echo Cai lai Python 3.10+ ban 64-bit tu python.org, tick Add python.exe to PATH, roi chay lai start.bat.
+pause
+exit /b 1
+
+:runapp
 "%VPY%" "%BASE%app.py"
 if errorlevel 1 pause

@@ -51,6 +51,13 @@ def prepare_win32() -> None:
         folders.append(Path(site.getusersitepackages()) / "pywin32_system32")
     except Exception:
         pass
+    lib = Path(sys.prefix) / "Lib" / "site-packages" / "win32" / "lib"
+    if lib.is_dir() and str(lib) not in sys.path:
+        sys.path.append(str(lib))
+    try:
+        import pywin32_bootstrap  # noqa: F401
+    except Exception:
+        pass
     seen: set[str] = set()
     for folder in folders:
         folder_text = str(folder)
@@ -63,6 +70,13 @@ def prepare_win32() -> None:
             except OSError:
                 pass
         os.environ["PATH"] = folder_text + os.pathsep + os.environ.get("PATH", "")
+        import ctypes
+        for name in ("pywintypes*.dll", "pythoncom*.dll"):
+            for dll in folder.glob(name):
+                try:
+                    ctypes.WinDLL(str(dll))
+                except OSError:
+                    pass
     _WIN32_READY = True
 _LAN_LOCK = threading.Lock()
 _LAN_CACHE = {"at": 0.0, "ips": []}
@@ -607,32 +621,8 @@ def list_printers(refresh: bool = False, remembered: str = "") -> dict:
 
 
 def printer_metrics(name: str) -> dict:
-    prepare_win32()
-    import win32con
-    import win32ui
-
-    hdc = win32ui.CreateDC()
-    try:
-        hdc.CreatePrinterDC(name)
-        dpi_x = hdc.GetDeviceCaps(win32con.LOGPIXELSX) or 203
-        dpi_y = hdc.GetDeviceCaps(win32con.LOGPIXELSY) or 203
-        width_mm = hdc.GetDeviceCaps(win32con.HORZSIZE) or 0
-        height_mm = hdc.GetDeviceCaps(win32con.VERTSIZE) or 0
-        if not width_mm:
-            width_mm = round(hdc.GetDeviceCaps(win32con.HORZRES) / dpi_x * 25.4, 1)
-        if not height_mm:
-            height_mm = round(hdc.GetDeviceCaps(win32con.VERTRES) / dpi_y * 25.4, 1)
-        return {
-            "width_mm": width_mm,
-            "height_mm": height_mm,
-            "dpi_x": dpi_x,
-            "dpi_y": dpi_y,
-        }
-    finally:
-        try:
-            hdc.DeleteDC()
-        except Exception:
-            pass
+    # Do not open the printer driver here. HPRT's DLL fails and the label size is fixed.
+    return {"width_mm": 35, "height_mm": 22, "dpi_x": 203, "dpi_y": 203}
 
 
 def shift_image_left(image: Image.Image, dots: int) -> Image.Image:
@@ -658,6 +648,7 @@ def tspl_payload(image: Image.Image, copies: int, shift_left_dots: int = 0) -> b
             byte = 0
             for bit in range(8):
                 x = x_byte * 8 + bit
+                # HPRT sample: 0x00 is white, a set bit is black. Do not invert.
                 if fitted.getpixel((x, y)) < 128:
                     byte |= 0x80 >> bit
             data.append(byte)
@@ -702,8 +693,9 @@ def printer_driver_port(printer: str) -> tuple[str, str]:
     return info.get("pDriverName") or "", info.get("pPortName") or ""
 
 
-def is_hprt_d41(printer: str, driver: str = "") -> bool:
-    return "d41" in f"{printer} {driver}".casefold()
+def is_hprt(printer: str, driver: str = "") -> bool:
+    text = f"{printer} {driver}".casefold()
+    return "hprt" in text or "d41" in text or "d35" in text or "sl32" in text
 
 
 def raw_port_ok(port: str) -> bool:
@@ -736,11 +728,11 @@ def print_raw_spool(printer: str, item: dict, copies: int) -> dict:
                 win32print.AbortPrinter(handle)
             except Exception:
                 pass
-        raise RuntimeError(f"HPRT D41 không nhận lệnh in: {exc}") from exc
+        raise RuntimeError(f"{printer} không nhận lệnh in: {exc}") from exc
     finally:
         win32print.ClosePrinter(handle)
     if written == 0:
-        raise RuntimeError("HPRT D41 không nhận lệnh in.")
+        raise RuntimeError(f"{printer} không nhận lệnh in.")
     log.info("printed %s stickers raw on %s", stickers, printer)
     return {"message": f"Đã in {stickers} tem tới «{printer}»", "warning": ""}
 
@@ -762,13 +754,13 @@ def print_label(item: dict, width_mm: float, height_mm: float, printer: str, cop
     if printer not in names:
         raise ValueError("Máy in không tồn tại")
     driver, port = printer_driver_port(printer)
-    if is_hprt_d41(printer, driver):
-        if not raw_port_ok(port):
-            raise RuntimeError(
-                "HPRT D41 không in được vì cổng máy in không phải cổng USB. "
-                "Vào Windows → Máy in → Thuộc tính máy in HPRT D41 → Cổng, chọn cổng USB của máy in."
-            )
-        return print_raw_spool(printer, item, copies)
+    if is_hprt(printer, driver) and not raw_port_ok(port):
+        raise RuntimeError(
+            "Máy in HPRT không in được vì cổng không phải cổng USB. "
+            "Vào Windows → Máy in → Thuộc tính máy in → Cổng, chọn cổng USB của máy in."
+        )
+    # Print through the Windows driver. A raw PRINT command makes HPRT hunt for a
+    # gap and feed dozens of blank labels. The driver form already feeds one row.
 
     hdc = win32ui.CreateDC()
     doc_started = False
@@ -787,6 +779,7 @@ def print_label(item: dict, width_mm: float, height_mm: float, printer: str, cop
         stickers = normalize_copies(copies)
         rows = stickers // 2
         image = render_pair(item, min(dpi_x, 600), min(dpi_y, 600), page_w, page_h)
+        image = image.convert("1", dither=Image.Dither.NONE)
         # The driver already starts 1.25 mm in from the paper edge. Shift another 1.5 mm left.
         origin_x = int(hdc.GetDeviceCaps(win32con.PHYSICALOFFSETX) or 0) + px(LEFT_SHIFT_MM, dpi_x)
         origin_y = int(hdc.GetDeviceCaps(win32con.PHYSICALOFFSETY) or 0)
